@@ -4,12 +4,11 @@ from collections import deque
 import os
 
 DB_NAME = "blockchain"
-COLLECTION = "transactions"
 
 
 # mongodb
 # -------
-def initMongo(client):
+def initMongo(client, collection):
     """
     Given a mongo client instance, create db/collection if either doesn't exist
 
@@ -23,22 +22,23 @@ def initMongo(client):
     """
     db = client[DB_NAME]
     try:
-        db.create_collection(COLLECTION)
+        db.create_collection(collection)
     except:
         pass
     try:
         # Index the block number so duplicate records cannot be made
-        db[COLLECTION].create_index(
-            [("number", pymongo.DESCENDING)],
-            unique=True
-        )
+        if collection == "block":
+            db[collection].create_index(
+                [("number", pymongo.DESCENDING)],
+                unique=True
+            )
     except:
         pass
 
-    return db[COLLECTION]
+    return db[collection]
 
 
-def insertMongo(client, d):
+def insert(client, d):
     """
     Insert a document into mongo client with collection selected.
 
@@ -52,7 +52,7 @@ def insertMongo(client, d):
     error <None or str>
     """
     try:
-        client.insert_one(d)
+        client.insert(d)
         return None
     except Exception as err:
         pass
@@ -147,7 +147,7 @@ def decodeBlock(block):
     """
     try:
         if block:
-        # Filter the block
+            # Filter the block
             block["number"] = int(block["number"], 16)
             block["timestamp"] = int(block["timestamp"], 16)
             block["difficulty"] = int(block["difficulty"], 16)
@@ -157,6 +157,8 @@ def decodeBlock(block):
             block["totalDifficulty"] = int(block["totalDifficulty"], 16)
         # Filter and decode each transaction and add it back
         # 	Value, gas, and gasPrice are all converted to ether
+        transactions = []
+        i = 0
         for t in block["transactions"]:
             t["value"] = float(int(t["value"], 16))
             t["blockNumber"] = int(t["blockNumber"], 16)
@@ -164,7 +166,10 @@ def decodeBlock(block):
             t["gasPrice"] = int(t["gasPrice"], 16)
             t["nonce"] = int(t["nonce"], 16)
             t["transactionIndex"] = int(t["transactionIndex"], 16)
-        return block
+            transactions.append(t)
+            block["transactions"][i] = t["hash"]
+            i += 1
+        return block, transactions
     except:
         return None
 

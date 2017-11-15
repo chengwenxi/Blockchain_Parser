@@ -55,13 +55,13 @@ class Crawler(object):
     """
 
     def __init__(
-        self,
-        start=True,
-        rpc_port=8545,
-        host="http://10.10.0.1",
-        delay=0.0001,
-        mongo_host="127.0.0.2",
-        mongo_post=27017
+            self,
+            start=True,
+            rpc_port=8540,
+            host="http://127.0.0.1",
+            delay=0.0001,
+            mongo_host="127.0.0.1",
+            mongo_post=27017
     ):
         """Initialize the Crawler."""
         logging.debug("Starting Crawler")
@@ -69,7 +69,8 @@ class Crawler(object):
         self.headers = {"content-type": "application/json"}
 
         # Initializes to default host/port = localhost/27017
-        self.mongo_client = crawler_util.initMongo(MongoClient(mongo_host, mongo_post))
+        self.block_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "block")
+        self.block_tx = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "transactions")
         # The max block number that is in mongo
         self.max_block_mongo = None
         # The max block number in the public blockchain
@@ -77,7 +78,7 @@ class Crawler(object):
         # Record errors for inserting block data into mongo
         self.insertion_errors = list()
         # Make a stack of block numbers that are in mongo
-        self.block_queue = crawler_util.makeBlockQueue(self.mongo_client)
+        self.block_queue = crawler_util.makeBlockQueue(self.block_db)
         # The delay between requests to geth
         self.delay = delay
 
@@ -105,8 +106,8 @@ class Crawler(object):
     def getBlock(self, n):
         """Get a specific block from the blockchain and filter the data."""
         data = self._rpcRequest("eth_getBlockByNumber", [hex(n), True], "result")
-        block = crawler_util.decodeBlock(data)
-        return block
+        block, transactions = crawler_util.decodeBlock(data)
+        return block, transactions
 
     def highestBlockEth(self):
         """Find the highest numbered block in geth."""
@@ -115,22 +116,30 @@ class Crawler(object):
 
     def saveBlock(self, block):
         """Insert a given parsed block into mongo."""
-        e = crawler_util.insertMongo(self.mongo_client, block)
+        e = crawler_util.insert(self.block_db, block)
+        if e:
+            self.insertion_errors.append(e)
+
+    def saveTransactions(self, block):
+        """Insert a given parsed transactions into mongo."""
+        e = crawler_util.insert(self.block_tx, block)
         if e:
             self.insertion_errors.append(e)
 
     def highestBlockMongo(self):
         """Find the highest numbered block in the mongo database."""
-        highest_block = crawler_util.highestBlock(self.mongo_client)
+        highest_block = crawler_util.highestBlock(self.block_db)
         logging.info("Highest block found in mongodb:{}".format(highest_block))
         return highest_block
 
     def add_block(self, n):
         """Add a block to mongo."""
-        b = self.getBlock(n)
+        b, t = self.getBlock(n)
         if b:
             self.saveBlock(b)
-            time.sleep(0.001)
+            if t and len(t) > 0:
+                self.saveTransactions(t)
+            time.sleep(0.002)
         else:
             self.saveBlock({"number": n, "transactions": []})
 
