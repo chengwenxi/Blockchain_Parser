@@ -1,4 +1,7 @@
 """A client to interact with node and to save data to mongo."""
+import random
+import threading
+from queue import Queue
 
 from pymongo import MongoClient
 from Preprocessing.Crawler import crawler_util
@@ -69,8 +72,9 @@ class Crawler(object):
         self.headers = {"content-type": "application/json"}
 
         # Initializes to default host/port = localhost/27017
+        self.account_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "account")
         self.block_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "block")
-        self.block_tx = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "transactions")
+        self.tx_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "transactions")
         # The max block number that is in mongo
         self.max_block_mongo = None
         # The max block number in the public blockchain
@@ -78,9 +82,13 @@ class Crawler(object):
         # Record errors for inserting block data into mongo
         self.insertion_errors = list()
         # Make a stack of block numbers that are in mongo
-        self.block_queue = crawler_util.makeBlockQueue(self.block_db)
+        # self.block_queue = crawler_util.makeBlockQueue(self.block_db)
         # The delay between requests to geth
         self.delay = delay
+
+        self.block_data = Queue()
+        self.blocks = Queue()
+        self.txs = Queue()
 
         if start:
             self.max_block_mongo = self.highestBlockMongo()
@@ -103,28 +111,41 @@ class Crawler(object):
             headers=self.headers).json()
         return res[key]
 
-    def getBlock(self, n):
+    def get_block(self, n):
         """Get a specific block from the blockchain and filter the data."""
         data = self._rpcRequest("eth_getBlockByNumber", [hex(n), True], "result")
-        block, transactions = crawler_util.decodeBlock(data)
-        return block, transactions
+        return data
+
+    def get_balance(self, account):
+        """Get a specific block from the blockchain and filter the data."""
+        data = self._rpcRequest("eth_getBalance", [account, "latest"], "result")
+        return int(data, 16)
 
     def highestBlockEth(self):
         """Find the highest numbered block in geth."""
         num_hex = self._rpcRequest("eth_blockNumber", [], "result")
         return int(num_hex, 16)
 
-    def saveBlock(self, block):
+    def save_block(self, block):
         """Insert a given parsed block into mongo."""
         e = crawler_util.insert(self.block_db, block)
         if e:
             self.insertion_errors.append(e)
 
-    def saveTransactions(self, block):
+    def save_transactions(self, txs):
         """Insert a given parsed transactions into mongo."""
-        e = crawler_util.insert(self.block_tx, block)
+        e = crawler_util.insert(self.tx_db, txs)
         if e:
             self.insertion_errors.append(e)
+
+    def save_account(self, account):
+        """Insert a given parsed transactions into mongo."""
+        e = crawler_util.save(self.account_db, account)
+        if e:
+            self.insertion_errors.append(e)
+
+    def find_account(self, account):
+        return crawler_util.find(self.account_db, account)
 
     def highestBlockMongo(self):
         """Find the highest numbered block in the mongo database."""
@@ -134,14 +155,12 @@ class Crawler(object):
 
     def add_block(self, n):
         """Add a block to mongo."""
-        b, t = self.getBlock(n)
+        b = self.get_block(n)
         if b:
-            self.saveBlock(b)
-            if t and len(t) > 0:
-                self.saveTransactions(t)
+            self.block_data.put(b)
             time.sleep(0.002)
         else:
-            self.saveBlock({"number": n, "transactions": []})
+            self.save_block({"number": n, "transactions": []})
 
     def run(self):
         """
@@ -152,32 +171,42 @@ class Crawler(object):
         """
         logging.debug("Processing geth blockchain:")
         logging.info("Highest block found as: {}".format(self.max_block_geth))
-        logging.info("Number of blocks to process: {}".format(
-            len(self.block_queue)))
 
         # Make sure the database isn't missing any blocks up to this point
+
+        for i in range(0, 5):
+            t = threading.Thread(target=self.add_tx)
+            t.setDaemon(True)
+            t.start()
+        for i in range(0, 2):
+            t = threading.Thread(target=self.store_block)
+            t.setDaemon(True)
+            t.start()
+        for i in range(0, 2):
+            t = threading.Thread(target=self.decode_block)
+            t.setDaemon(True)
+            t.start()
         logging.debug("Verifying that mongo isn't missing any blocks...")
-        self.max_block_mongo = 1
-        if len(self.block_queue) > 0:
-            print("Looking for missing blocks...")
-            self.max_block_mongo = self.block_queue.pop()
-            for n in tqdm.tqdm(range(1, self.max_block_mongo)):
-                if len(self.block_queue) == 0:
-                    # If we have reached the max index of the queue,
-                    # break the loop
-                    break
-                else:
-                    # -If a block with number = current index is not in
-                    # the queue, add it to mongo.
-                    # -If the lowest block number in the queue (_n) is
-                    # not the current running index (n), then _n > n
-                    # and we must add block n to mongo. After doing so,
-                    # we will add _n back to the queue.
-                    _n = self.block_queue.popleft()
-                    if n != _n:
-                        self.add_block(n)
-                        self.block_queue.appendleft(_n)
-                        logging.info("Added block {}".format(n))
+        # if len(self.block_queue) > 0:
+        #     print("Looking for missing blocks...")
+        #     self.max_block_mongo = self.block_queue.pop()
+        #     for n in tqdm.tqdm(range(1, self.max_block_mongo)):
+        #         if len(self.block_queue) == 0:
+        #             # If we have reached the max index of the queue,
+        #             # break the loop
+        #             break
+        #         else:
+        #             # -If a block with number = current index is not in
+        #             # the queue, add it to mongo.
+        #             # -If the lowest block number in the queue (_n) is
+        #             # not the current running index (n), then _n > n
+        #             # and we must add block n to mongo. After doing so,
+        #             # we will add _n back to the queue.
+        #             _n = self.block_queue.popleft()
+        #             if n != _n:
+        #                 self.add_block(n)
+        #                 self.block_queue.appendleft(_n)
+        #                 logging.info("Added block {}".format(n))
 
         # Get all new blocks
         print("Processing remainder of the blockchain...")
@@ -185,3 +214,55 @@ class Crawler(object):
             self.add_block(n)
 
         print("Done!\n")
+
+    def add_tx(self):
+        while True:
+            if self.txs.qsize() <= 0:
+                time.sleep(0.5)
+                continue
+            if self.txs.qsize() > 20:
+                print("txs count: ", self.txs.qsize())
+            t = self.txs.get()
+            if t and len(t) > 0:
+                self.save_transactions(t)
+            for tx in t:
+                _creates = tx["creates"]
+                if _creates is not None:
+                    self.save_account({"_id": _creates, "type": "contract"})
+                _from = tx["from"]
+                if _from is not None:
+                    _account = self.find_account(_from)
+                    if _account is not None and "type" in _account:
+                        self.save_account({"_id": _from, "type": _account['type'], "balance": self.get_balance(_from)})
+                    else:
+                        self.save_account({"_id": _from, "type": "normal", "balance": self.get_balance(_from)})
+                _to = tx["to"]
+
+                if _to is not None:
+                    _account = self.find_account(_to)
+                    if _account is not None and "type" in _account:
+                        self.save_account({"_id": _to, "type": _account['type'], "balance": self.get_balance(_to)})
+                    else:
+                        self.save_account({"_id": _from, "type": "normal", "balance": self.get_balance(_from)})
+
+    def store_block(self):
+        while True:
+            if self.blocks.qsize() <= 0:
+                time.sleep(0.5)
+                continue
+            if self.blocks.qsize() > 20:
+                print("blocks count: ", self.blocks.qsize())
+            b = self.blocks.get()
+            self.save_block(b)
+
+    def decode_block(self):
+        while True:
+            if self.block_data.qsize() <= 0:
+                time.sleep(0.5)
+                continue
+            if self.block_data.qsize() > 20:
+                print("block_data count: ", self.block_data.qsize())
+            data = self.block_data.get()
+            block, transactions = crawler_util.decodeBlock(data)
+            self.blocks.put(block)
+            self.txs.put(transactions)

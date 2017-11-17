@@ -25,16 +25,6 @@ def initMongo(client, collection):
         db.create_collection(collection)
     except:
         pass
-    try:
-        # Index the block number so duplicate records cannot be made
-        if collection == "block":
-            db[collection].create_index(
-                [("number", pymongo.DESCENDING)],
-                unique=True
-            )
-    except:
-        pass
-
     return db[collection]
 
 
@@ -56,6 +46,42 @@ def insert(client, d):
         return None
     except Exception as err:
         pass
+
+
+def save(client, d):
+    """
+    Insert or Upate a document into mongo client with collection selected.
+
+    Params:
+    -------
+    client <mongodb Client>
+    d <dict>
+
+    Returns:
+    --------
+    error <None or str>
+    """
+    try:
+        client.save(d)
+        return None
+    except Exception as err:
+        pass
+
+
+def find(client, _id):
+    """
+    Insert or Upate a document into mongo client with collection selected.
+
+    Params:
+    -------
+    client <mongodb Client>
+    d <dict>
+
+    Returns:
+    --------
+    None or object
+    """
+    return client.find_one(_id)
 
 
 def highestBlock(client):
@@ -148,6 +174,7 @@ def decodeBlock(block):
     try:
         if block:
             # Filter the block
+            block["_id"] = int(block["number"], 16)
             block["number"] = int(block["number"], 16)
             block["timestamp"] = int(block["timestamp"], 16)
             block["difficulty"] = int(block["difficulty"], 16)
