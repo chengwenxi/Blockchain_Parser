@@ -60,8 +60,8 @@ class Crawler(object):
     def __init__(
             self,
             start=True,
-            rpc_port=8540,
-            host="http://127.0.0.1",
+            rpc_port=8545,
+            host="http://116.62.62.39",
             delay=0.0001,
             mongo_host="127.0.0.1",
             mongo_post=27017
@@ -226,22 +226,24 @@ class Crawler(object):
             if t and len(t) > 0:
                 self.save_transactions(t)
             for tx in t:
-                _creates = tx["creates"]
+                _creates = tx.get("creates", None)
                 if _creates is not None:
                     self.save_account({"_id": _creates, "type": "contract"})
-                _from = tx["from"]
+                _from = tx.get("from", None)
                 if _from is not None:
                     _account = self.find_account(_from)
                     if _account is not None and "type" in _account:
-                        self.save_account({"_id": _from, "type": _account['type'], "balance": self.get_balance(_from)})
+                        self.save_account(
+                            {"_id": _from, "type": _account.get('type'), "balance": self.get_balance(_from)})
                     else:
-                        self.save_account({"_id": _from, "type": "normal", "balance": self.get_balance(_from)})
-                _to = tx["to"]
+                        self.save_account(
+                            {"_id": _from, "type": "normal", "balance": self.get_balance(_from) / (10 ** 17)})
 
+                _to = tx.get("to", None)
                 if _to is not None:
                     _account = self.find_account(_to)
                     if _account is not None and "type" in _account:
-                        self.save_account({"_id": _to, "type": _account['type'], "balance": self.get_balance(_to)})
+                        self.save_account({"_id": _to, "type": _account.get('type'), "balance": self.get_balance(_to)})
                     else:
                         self.save_account({"_id": _from, "type": "normal", "balance": self.get_balance(_from)})
 
