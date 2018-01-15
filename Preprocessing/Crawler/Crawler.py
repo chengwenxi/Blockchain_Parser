@@ -1,6 +1,6 @@
 """A client to interact with node and to save data to mongo."""
-import random
 import threading
+from configparser import ConfigParser
 from queue import Queue
 
 from pymongo import MongoClient
@@ -14,15 +14,13 @@ import time
 import tqdm
 
 sys.path.append(os.path.realpath(os.path.dirname(__file__)))
-
-os.environ['BLOCKCHAIN_MONGO_DATA_DIR'] = "D:/util/mongodb-win32-x86_64-3.0.6/DATA"
-DIR = os.environ['BLOCKCHAIN_MONGO_DATA_DIR']
-LOGFIL = "crawler.log"
-if "BLOCKCHAIN_ANALYSIS_LOGS" in os.environ:
-    LOGFIL = "{}/{}".format(os.environ['BLOCKCHAIN_ANALYSIS_LOGS'], LOGFIL)
-crawler_util.refresh_logger(LOGFIL)
-logging.basicConfig(filename=LOGFIL, level=logging.DEBUG)
+LOGFILE = "crawler.log"
+crawler_util.refresh_logger(LOGFILE)
+logging.basicConfig(filename=LOGFILE, level=logging.DEBUG)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+cp = ConfigParser()
+cp.read('../app.config')
 
 
 class Crawler(object):
@@ -60,42 +58,41 @@ class Crawler(object):
     def __init__(
             self,
             start=True,
-            rpc_port=8545,
-            host="http://116.62.62.39",
-            delay=0.0001,
-            mongo_host="127.0.0.1",
-            mongo_post=27017
+            url=cp.get('ethermint', 'url'),
+            delay=float(cp.get('ethermint', 'delay')),
+            mongo_host=cp.get('mongodb', 'host'),
+            mongo_post=int(cp.get('mongodb', 'post'))
     ):
         """Initialize the Crawler."""
         logging.debug("Starting Crawler")
-        self.url = "{}:{}".format(host, rpc_port)
+        self.url = url
         self.headers = {"content-type": "application/json"}
-
+        self.delay = delay
         # Initializes to default host/port = localhost/27017
         self.account_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "account")
         self.block_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "block")
         self.tx_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "transactions")
+        self.receipt_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "receipt")
         # The max block number that is in mongo
         self.max_block_mongo = None
         # The max block number in the public blockchain
-        self.max_block_geth = None
+        self.max_block_eth = None
         # Record errors for inserting block data into mongo
         self.insertion_errors = list()
         # Make a stack of block numbers that are in mongo
-        # self.block_queue = crawler_util.makeBlockQueue(self.block_db)
+        # self.blocks = crawler_util.makeBlockQueue(self.block_db)
         # The delay between requests to geth
         self.delay = delay
-
-        self.block_data = Queue()
         self.blocks = Queue()
         self.txs = Queue()
+        self.receipts = Queue()
 
         if start:
-            self.max_block_mongo = self.highestBlockMongo()
-            self.max_block_geth = self.highestBlockEth()
+            self.max_block_mongo = self.highest_block_mongo()
+            self.max_block_eth = self.highest_block_eth()
             self.run()
 
-    def _rpcRequest(self, method, params, key):
+    def rpc_request(self, method, params, key):
         """Make an RPC request to geth on port 8545."""
 
         payload = {
@@ -113,22 +110,33 @@ class Crawler(object):
 
     def get_block(self, n):
         """Get a specific block from the blockchain and filter the data."""
-        data = self._rpcRequest("eth_getBlockByNumber", [hex(n), True], "result")
+        data = self.rpc_request("eth_getBlockByNumber", [hex(n), True], "result")
+        return data
+
+    def get_receipt(self, tx_hash):
+        """Get a specific block from the blockchain and filter the data."""
+        data = self.rpc_request("eth_getTransactionReceipt", [tx_hash], "result")
         return data
 
     def get_balance(self, account):
         """Get a specific block from the blockchain and filter the data."""
-        data = self._rpcRequest("eth_getBalance", [account, "latest"], "result")
-        return int(data, 16)
+        data = self.rpc_request("eth_getBalance", [account, "latest"], "result")
+        return data
 
-    def highestBlockEth(self):
+    def highest_block_eth(self):
         """Find the highest numbered block in geth."""
-        num_hex = self._rpcRequest("eth_blockNumber", [], "result")
+        num_hex = self.rpc_request("eth_blockNumber", [], "result")
         return int(num_hex, 16)
 
     def save_block(self, block):
         """Insert a given parsed block into mongo."""
         e = crawler_util.insert(self.block_db, block)
+        if e:
+            self.insertion_errors.append(e)
+
+    def save_receipt(self, receipt):
+        """Insert a given parsed block into mongo."""
+        e = crawler_util.insert(self.receipt_db, receipt)
         if e:
             self.insertion_errors.append(e)
 
@@ -147,18 +155,21 @@ class Crawler(object):
     def find_account(self, account):
         return crawler_util.find(self.account_db, account)
 
-    def highestBlockMongo(self):
+    def highest_block_mongo(self):
         """Find the highest numbered block in the mongo database."""
         highest_block = crawler_util.highestBlock(self.block_db)
         logging.info("Highest block found in mongodb:{}".format(highest_block))
-        return highest_block
+        if highest_block is None or highest_block == 0:
+            return 0
+        else:
+            return int(highest_block, 16)
 
     def add_block(self, n):
         """Add a block to mongo."""
         b = self.get_block(n)
         if b:
-            self.block_data.put(b)
-            time.sleep(0.002)
+            self.blocks.put(b)
+            time.sleep(self.delay)
         else:
             self.save_block({"number": n, "transactions": []})
 
@@ -170,101 +181,103 @@ class Crawler(object):
         with block data.
         """
         logging.debug("Processing geth blockchain:")
-        logging.info("Highest block found as: {}".format(self.max_block_geth))
+        logging.info("Highest block found as: {}".format(self.max_block_eth))
 
         # Make sure the database isn't missing any blocks up to this point
-
-        for i in range(0, 5):
+        for i in range(0, 3):
             t = threading.Thread(target=self.add_tx)
             t.setDaemon(True)
             t.start()
-        for i in range(0, 2):
-            t = threading.Thread(target=self.store_block)
-            t.setDaemon(True)
-            t.start()
-        for i in range(0, 2):
-            t = threading.Thread(target=self.decode_block)
-            t.setDaemon(True)
-            t.start()
+            time.sleep(1)
         logging.debug("Verifying that mongo isn't missing any blocks...")
-        # if len(self.block_queue) > 0:
-        #     print("Looking for missing blocks...")
-        #     self.max_block_mongo = self.block_queue.pop()
-        #     for n in tqdm.tqdm(range(1, self.max_block_mongo)):
-        #         if len(self.block_queue) == 0:
-        #             # If we have reached the max index of the queue,
-        #             # break the loop
-        #             break
-        #         else:
-        #             # -If a block with number = current index is not in
-        #             # the queue, add it to mongo.
-        #             # -If the lowest block number in the queue (_n) is
-        #             # not the current running index (n), then _n > n
-        #             # and we must add block n to mongo. After doing so,
-        #             # we will add _n back to the queue.
-        #             _n = self.block_queue.popleft()
-        #             if n != _n:
-        #                 self.add_block(n)
-        #                 self.block_queue.appendleft(_n)
-        #                 logging.info("Added block {}".format(n))
-
-        # Get all new blocks
         print("Processing remainder of the blockchain...")
-        for n in tqdm.tqdm(range(self.max_block_mongo, self.max_block_geth)):
+        for n in tqdm.tqdm(range(self.max_block_mongo, self.max_block_eth)):
             self.add_block(n)
 
         print("Done!\n")
 
     def add_tx(self):
         while True:
-            if self.txs.qsize() <= 0:
-                time.sleep(0.5)
-                continue
-            if self.txs.qsize() > 20:
-                print("txs count: ", self.txs.qsize())
-            t = self.txs.get()
-            if t and len(t) > 0:
-                self.save_transactions(t)
-            for tx in t:
-                _creates = tx.get("creates", None)
-                if _creates is not None:
-                    self.save_account({"_id": _creates, "type": "contract"})
-                _from = tx.get("from", None)
-                if _from is not None:
-                    _account = self.find_account(_from)
-                    if _account is not None and "type" in _account:
-                        self.save_account(
-                            {"_id": _from, "type": _account.get('type'), "balance": self.get_balance(_from)})
-                    else:
-                        self.save_account(
-                            {"_id": _from, "type": "normal", "balance": self.get_balance(_from) / (10 ** 17)})
-
-                _to = tx.get("to", None)
-                if _to is not None:
-                    _account = self.find_account(_to)
-                    if _account is not None and "type" in _account:
-                        self.save_account({"_id": _to, "type": _account.get('type'), "balance": self.get_balance(_to)})
-                    else:
-                        self.save_account({"_id": _from, "type": "normal", "balance": self.get_balance(_from)})
-
-    def store_block(self):
-        while True:
             if self.blocks.qsize() <= 0:
                 time.sleep(0.5)
                 continue
             if self.blocks.qsize() > 20:
                 print("blocks count: ", self.blocks.qsize())
-            b = self.blocks.get()
-            self.save_block(b)
+            block = self.blocks.get()
+            if block:
+                block, transactions, receipts = self.get_block_detail(block)
+                if block is not None and len(block) > 0:
+                    self.save_block(block)
+                if transactions is not None and len(transactions) > 0:
+                    self.save_transactions(transactions)
+                if receipts is not None and len(receipts) > 0:
+                    self.deal_receipt(receipts)
 
-    def decode_block(self):
-        while True:
-            if self.block_data.qsize() <= 0:
-                time.sleep(0.5)
-                continue
-            if self.block_data.qsize() > 20:
-                print("block_data count: ", self.block_data.qsize())
-            data = self.block_data.get()
-            block, transactions = crawler_util.decodeBlock(data)
-            self.blocks.put(block)
-            self.txs.put(transactions)
+    def get_block_detail(self, block):
+        if block:
+            # Filter the block
+            block["_id"] = int(block["number"], 16)
+        #     block["number"] = int(block["number"], 16)
+        #     block["timestamp"] = int(block["timestamp"], 16)
+        #     block["difficulty"] = int(block["difficulty"], 16)
+        #     block["gasLimit"] = int(block["gasLimit"], 16)
+        #     block["gasUsed"] = int(block["gasUsed"], 16)
+        #     block["size"] = int(block["size"], 16)
+        #     block["totalDifficulty"] = int(block["totalDifficulty"], 16)
+        # Filter and decode each transaction and add it back
+        # 	Value, gas, and gasPrice are all converted to ether
+        transactions = []
+        receipts = []
+        i = 0
+        for t in block["transactions"]:
+            t["_id"] = t["hash"]
+            # t["value"] = float(int(t["value"], 16))
+            # t["blockNumber"] = int(t["blockNumber"], 16)
+            # t["gas"] = int(t["gas"], 16)
+            # t["gasPrice"] = int(t["gasPrice"], 16)
+            # t["nonce"] = int(t["nonce"], 16)
+            # t["transactionIndex"] = int(t["transactionIndex"], 16)
+            transactions.append(t)
+            block["transactions"][i] = t["hash"]
+            receipt = self.get_receipt(t["hash"])
+            if receipt:
+                # receipt["blockNumber"] = int(receipt["blockNumber"], 16)
+                # receipt["cumulativeGasUsed"] = int(receipt["cumulativeGasUsed"], 16)
+                # receipt["gasUsed"] = int(receipt["gasUsed"], 16)
+                # receipt["transactionIndex"] = int(receipt["transactionIndex"], 16)
+                receipts.append(receipt)
+            i += 1
+        return block, transactions, receipts
+
+    def deal_receipt(self, receipts):
+        for receipt in receipts:
+            tx = receipt.get("transactionHash") if receipt is not None else None
+            if tx is not None:
+                if receipt is not None:
+                    receipt["_id"] = receipt["transactionHash"]
+                    self.save_receipt(receipt)
+                    contract = receipt.get("contractAddress")
+                    if contract is not None:
+                        self.save_account(
+                            {"_id": contract, "type": "contract", "receipt": receipt.get("transactionHash")})
+                    _from = receipt.get("from")
+                    if _from is not None:
+                        _account = self.find_account(_from)
+                        if _account is not None and "type" in _account and _account["type"] == "contract":
+                            self.save_account(
+                                {"_id": _from, "type": _account.get('type'), "balance": self.get_balance(_from),
+                                 "receipt": receipt.get("transactionHash")})
+                        else:
+                            self.save_account({"_id": _from, "type": "normal", "balance": self.get_balance(_from),
+                                               "receipt": receipt.get("transactionHash")})
+                    _to = receipt.get("to")
+                    if _to is not None:
+                        _account = self.find_account(_to)
+                        if _account is not None and "type" in _account and _account["type"] == "contract":
+                            self.save_account(
+                                {"_id": _to, "type": _account.get('type'), "balance": self.get_balance(_to),
+                                 "receipt": receipt.get("transactionHash")})
+                        else:
+                            self.save_account({"_id": _from, "type": "normal", "balance": self.get_balance(_from),
+                                               "receipt": receipt.get("transactionHash")})
+        pass

@@ -3,11 +3,14 @@ from flask import request
 from Preprocessing.Crawler import crawler_util
 from pymongo import MongoClient
 import json
+from configparser import ConfigParser
 
 app = Flask(__name__)
 
-mongo_host = "127.0.0.1"
-mongo_post = 27017
+cp = ConfigParser()
+cp.read('../app.config')
+mongo_host = cp.get('mongodb', 'host')
+mongo_post = int(cp.get('mongodb', 'post'))
 account_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "account")
 block_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "block")
 tx_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "transactions")
