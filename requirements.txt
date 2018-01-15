@@ -2,3 +2,4 @@ requests
 pymongo
 tqdm
 Flask
+configparser

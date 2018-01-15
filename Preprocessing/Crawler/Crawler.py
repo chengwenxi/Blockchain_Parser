@@ -86,6 +86,7 @@ class Crawler(object):
         self.blocks = Queue()
         self.txs = Queue()
         self.receipts = Queue()
+        self.request_list = []
 
         if start:
             self.max_block_mongo = self.highest_block_mongo()
@@ -164,15 +165,6 @@ class Crawler(object):
         else:
             return int(highest_block, 16)
 
-    def add_block(self, n):
-        """Add a block to mongo."""
-        b = self.get_block(n)
-        if b:
-            self.blocks.put(b)
-            time.sleep(self.delay)
-        else:
-            self.save_block({"number": n, "transactions": []})
-
     def run(self):
         """
         Run the process.
@@ -184,19 +176,30 @@ class Crawler(object):
         logging.info("Highest block found as: {}".format(self.max_block_eth))
 
         # Make sure the database isn't missing any blocks up to this point
-        for i in range(0, 3):
-            t = threading.Thread(target=self.add_tx)
+        for i in range(0, 1):
+            t = threading.Thread(target=self.add_block)
             t.setDaemon(True)
             t.start()
             time.sleep(1)
-        logging.debug("Verifying that mongo isn't missing any blocks...")
-        print("Processing remainder of the blockchain...")
         for n in tqdm.tqdm(range(self.max_block_mongo, self.max_block_eth)):
-            self.add_block(n)
+            self.get_block_tx(n)
+        print("Start!\n")
 
-        print("Done!\n")
+    def get_block_tx(self, n):
+        """Add a block to mongo."""
+        try:
+            b = self.get_block(n)
+            if b:
+                self.blocks.put(b)
+                time.sleep(self.delay)
+            else:
+                self.save_block({"number": n, "transactions": []})
+        except Exception as e:
+            print(e)
+            time.sleep(10)
+            self.get_block_tx(n)
 
-    def add_tx(self):
+    def add_block(self):
         while True:
             if self.blocks.qsize() <= 0:
                 time.sleep(0.5)
@@ -204,6 +207,10 @@ class Crawler(object):
             if self.blocks.qsize() > 20:
                 print("blocks count: ", self.blocks.qsize())
             block = self.blocks.get()
+            self.deal_block(block)
+
+    def deal_block(self, block):
+        try:
             if block:
                 block, transactions, receipts = self.get_block_detail(block)
                 if block is not None and len(block) > 0:
@@ -212,6 +219,10 @@ class Crawler(object):
                     self.save_transactions(transactions)
                 if receipts is not None and len(receipts) > 0:
                     self.deal_receipt(receipts)
+        except Exception as e:
+            print(e)
+            time.sleep(10)
+            self.deal_block(block)
 
     def get_block_detail(self, block):
         if block:
