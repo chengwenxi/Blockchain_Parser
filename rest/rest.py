@@ -14,6 +14,7 @@ mongo_post = int(cp.get('mongodb', 'post'))
 account_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "account")
 block_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "block")
 tx_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "transactions")
+receipt_db = crawler_util.initMongo(MongoClient(mongo_host, mongo_post), "receipt")
 
 
 @app.route('/')
@@ -42,7 +43,7 @@ def tx():
 
     accounts = []
     if addr is not None:
-        for item in tx_db.find({"$or": [{"from": addr}, {"to": addr}]}).limit(size).skip(page * size):
+        for item in receipt_db.find({"$or": [{"from": addr}, {"to": addr}]}).limit(size).skip(page * size):
             del item["_id"]
             accounts.append(item)
     else:
@@ -52,5 +53,17 @@ def tx():
     return json.dumps(accounts)
 
 
+@app.route('/receipt', methods=['GET'])
+def receipt():
+    args = request.args
+    transaction_hash = args.get("tx", None)
+    result = {}
+    if transaction_hash is not None:
+        for item in receipt_db.find({"transactionHash": transaction_hash}):
+            result = item
+            break
+    return json.dumps(result)
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80, debug=True)
+    app.run(host='0.0.0.0', port=3434, debug=True)
