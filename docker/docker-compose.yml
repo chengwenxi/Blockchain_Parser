@@ -1,0 +1,14 @@
+version: '2'
+services:
+    parser:
+        image: parser
+        container_name: parser-app
+        ports:
+            - 3434:3434
+    parser-mongo:
+        image: mongo:3.6.2
+        container_name: parser-mongo
+        volumes:
+            - ~/volumes/parser-app/mongo/:/data/db/
+        ports:
+            - 27017:27017
