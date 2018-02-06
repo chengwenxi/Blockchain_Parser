@@ -38,7 +38,7 @@ def find(client, _id):
 
 
 def highestBlock(client):
-    n = client.find_one(sort=[("number", pymongo.DESCENDING)])
+    n = client.find_one(sort=[("_id", pymongo.DESCENDING)])
     if not n:
         # If the database is empty, the highest block # is 0
         return 0
