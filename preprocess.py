@@ -1,5 +1,5 @@
 """Pull data from geth and parse it into mongo."""
-from Preprocessing.Crawler import Crawler
+from preprocessing.crawler import Crawler
 
 print("Booting processes")
 

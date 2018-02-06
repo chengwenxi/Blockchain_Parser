@@ -4,7 +4,7 @@ from configparser import ConfigParser
 from queue import Queue
 
 from pymongo import MongoClient
-from Preprocessing.Crawler import crawler_util
+from preprocessing.crawler import crawler_util
 import requests
 import json
 import sys
@@ -20,7 +20,7 @@ logging.basicConfig(filename=LOGFILE, level=logging.DEBUG)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 cp = ConfigParser()
-cp.read('../app.config')
+cp.read('app.config')
 
 
 class Crawler(object):
