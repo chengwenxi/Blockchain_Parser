@@ -3,8 +3,9 @@ from flask import request
 from pymongo import MongoClient
 import json
 from configparser import ConfigParser
+from multiprocessing import Process
 
-from preprocessing.crawler import crawler_util
+from preprocessing.crawler import crawler_util, Crawler
 
 app = Flask(__name__)
 
@@ -67,4 +68,7 @@ def receipt():
 
 
 if __name__ == '__main__':
+    p = Process(target=Crawler.Crawler, args=())
+    p.start()
     app.run(host='0.0.0.0', port=3434, debug=True)
+
