@@ -176,7 +176,7 @@ class Crawler(object):
         logging.info("Highest block found as: {}".format(self.max_block_eth))
 
         # Make sure the database isn't missing any blocks up to this point
-        for i in range(0, 1):
+        for i in range(0, 3):
             t = threading.Thread(target=self.add_block)
             t.setDaemon(True)
             t.start()
