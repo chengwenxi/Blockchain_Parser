@@ -1,11 +1,3 @@
-Preprocessing/node/node_modules/
-Preprocessing/mongo/data/
-Preprocessing/scripts/logs/
-Analysis/data/pickles/
-Analysis/data/snapshots/
-Analysis/data/graphs
-Scripts/data
-Scripts/.*
 *.pyc
 *.log
 *.p
@@ -13,3 +5,4 @@ Scripts/.*
 *.ipynb
 .idea
 .iml
+.DS_Store
