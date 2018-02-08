@@ -89,9 +89,11 @@ class Crawler(object):
         self.request_list = []
 
         if start:
-            self.max_block_mongo = self.highest_block_mongo()
-            self.max_block_eth = self.highest_block_eth()
-            self.run()
+            while True:
+                self.max_block_mongo = self.highest_block_mongo()
+                self.max_block_eth = self.highest_block_eth()
+                self.run()
+                time.sleep(1)
 
     def rpc_request(self, method, params, key):
         """Make an RPC request to geth on port 8545."""
