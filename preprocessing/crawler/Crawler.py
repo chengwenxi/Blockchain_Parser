@@ -89,11 +89,7 @@ class Crawler(object):
         self.request_list = []
 
         if start:
-            while True:
-                self.max_block_mongo = self.highest_block_mongo()
-                self.max_block_eth = self.highest_block_eth()
-                self.run()
-                time.sleep(1)
+            self.run()
 
     def rpc_request(self, method, params, key):
         """Make an RPC request to geth on port 8545."""
@@ -183,9 +179,13 @@ class Crawler(object):
             t.setDaemon(True)
             t.start()
             time.sleep(1)
-        for n in tqdm.tqdm(range(self.max_block_mongo, self.max_block_eth)):
-            self.get_block_tx(n)
         print("Start!\n")
+        while True:
+            self.max_block_mongo = self.highest_block_mongo()
+            self.max_block_eth = self.highest_block_eth()
+            for n in tqdm.tqdm(range(self.max_block_mongo, self.max_block_eth)):
+                self.get_block_tx(n)
+            time.sleep(1)
 
     def get_block_tx(self, n):
         """Add a block to mongo."""
