@@ -4,10 +4,12 @@ from pymongo import MongoClient
 import json
 from configparser import ConfigParser
 from multiprocessing import Process
+from flask_cors import *
 
 from preprocessing.crawler import crawler_util, Crawler
 
 app = Flask(__name__)
+CORS(app, supports_credentials=True)
 
 cp = ConfigParser()
 cp.read('app.config')

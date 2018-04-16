@@ -3,3 +3,4 @@ pymongo
 tqdm
 Flask
 configparser
+flask-cors
